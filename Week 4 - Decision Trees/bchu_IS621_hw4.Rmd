@@ -1,0 +1,393 @@
+---
+title: "Decision Trees"
+author: "Brian Chu"
+date: "March 22, 2015"
+output: html_document
+---
+
+**1. Implement a function that takes a categorical vector (in character or factor form) and calculates the entropy for that vector.
+Your code should accept as input a single vector and output a single number.**
+
+```{r}
+entropy <- function(v) {
+  v <- as.factor(v) #convert vector to factor
+  v <- droplevels(v) #drop unused levels/responses (needed for some information gain calcs)
+  tv <- table(v)
+  pv <- prop.table(tv) #frequency of levels
+  w <- numeric() #weight vector
+  e <- numeric() #entropy vector
+  for (i in 1:length(tv)) {
+    w[i] <- tv[i] / length(v) #weight of level
+    e[i] <- -w[i] * log2(w[i]) #entropy formula per level
+  }
+  entropy <- sum(e) #aggregate entropy value
+  return(entropy)  
+}
+```
+
+Test with lens24 class vector (verify with texbook pg 57-58)
+```{r, warning=FALSE}
+url <- "http://archive.ics.uci.edu/ml/machine-learning-databases/lenses/lenses.data"
+lens <- read.table(file=url)[,-1]
+colnames(lens) <- c("age", "specRx", "astig", "tears", "class") 
+lens_class <- lens[,5]
+f1 <- (entropy(lens_class)) #calculate entropy for age vector
+f1 
+```
+
+**2. Implement a function that calculates the information gain of one categorical vector
+when partitioned according to another categorical vector.**
+
+```{r}
+infgain <- function(v1, v2) {
+  entropy_v1 <- entropy(v1) #calculate entropy for vector 1
+  entropy_v2 <- entropy(v2) #calculate entropy for vector 2
+  return(entropy_v1 - entropy_v2) #information gain = entropy difference
+}
+```
+
+Test with lens24 age and specRx vectors
+```{r, warning=FALSE}
+age <- lens[,1]
+specRx <- lens[,2]
+f2 <- (infgain(age, specRx))
+f2
+```
+
+**3. Implement a function that takes as its input a data frame of categorical variables,
+one of which is identified as the target variable, and outputs the following in list format:**
+
+* The information gain on the target column when partitioning according to each of the remaining columns
+* The identity of the column that provides the highest information gain
+```{r}
+#returns list of information gain values
+infogain_all <- function(df, target_col){
+  df <- as.data.frame(lapply(df, as.factor)) #convert dataframe to factors
+  target <- df[,target_col] #set target classification column
+  x <- df[-target_col] #set input columns (i.e. everything except target)  
+  entropy_target <- entropy(target) #calculate entropy of target column (i.e. initial entropy)
+  
+  #initialize result list based on df column names
+  num_cols <- ncol(x)
+  name_list <- character(length=num_cols)
+  for(i in 1:num_cols){
+    name_list[i] <- colnames(x)[i]
+  }
+  result_list <- vector("list", length(name_list))
+  names(result_list) <- name_list
+  
+  #PROCESS: loop over attributes, loop over factors, calc weighted entropy, calc information gain from target
+  for(i in 1:num_cols) {
+    entropy_vals <- numeric() #vector of entropy values per attribute
+    attribute <- x[,i]
+    n <- nlevels(attribute)
+    p <- as.numeric(prop.table(table(attribute))) #weight of each factor level
+    for(j in 1:n) {
+      lev <- levels(attribute)[j] 
+      subtarget <- df[df[,i]==lev,target_col] #subset target based on factor level
+      subtarget <- droplevels(subtarget) #drop unused levels
+      entropy_vals[j] <- entropy(subtarget) 
+    }
+    infogain <- entropy_target - sum(p*entropy_vals) #weighted average of attribute level
+    result_list[i] <- infogain
+  }
+  
+  return(result_list)
+}
+
+#returns max information gain attribute and value based on previous function
+infogain_max <- function(l){
+  igmax_id <- names(which.max(l)) #atribute name
+  igmax_val <- round(max(unlist(l)), 4) #attribute value
+  igmax <- (list("max"=igmax_id, "max_val"=igmax_val)) #convert to named list
+  return(igmax)
+}
+```
+
+Test using lens24 dataset (verify with textbook pg 60)
+```{r}
+lens_infogain <- infogain_all(lens, 5)
+lens_igmax <- infogain_max(lens_infogain)
+print(lens_infogain)
+```
+
+```{r echo=FALSE}
+print(paste("The column with the highest information gain is", lens_igmax$max, "with a value of", lens_igmax$max_val, "bits."))
+```
+   
+**4. Using your custom functions above, build by hand a decision tree on the jury data contained in the file jury-training-data.csv. Document the final set of rules you come up with for the data set. (You should end up with a series of if/then statements, one for each final branch of your tree. Be sure to indicate the support and the probability at the end of each branch. You need not worry about a Laplace correction at this point.**
+
+**Once you have built your decision tree, use it to classify all of the observations in the public and private testing data sets for the jury problem. Comment on how well your tree performs on the public data set. If you “prune your tree” can you get better results on the testing data? Explain.**
+
+**For this task, you should submit:**
+
+* Your set of decision rules
+* The R code that you used to build the tree (this need not be polished, I just want to see how you made your tree)
+* Your commentary on the classification success on the public learning data set
+* Your classifications (as a CSV file or similar) of the private learning data set
+
+```{r}
+#inputs dataframe and target column number / outputs tree decision rules and classification probability
+#I realize this algorithm would be better off in a function wrapper, but left this way to illustrate nested if/else pattern
+
+decision_tree <- function(df, target_col) {
+  df <- as.data.frame(lapply(df, as.factor)) #convert all columns to factors
+  class_name <- colnames(df)[target_col]
+  #check if all class instances are the same (i.e. no tree needed)
+  if (nlevels(df[,target_col])==1){
+    print(paste("all rows", "all levels", levels(df[,target_col])))
+  } 
+  else{
+    infogain1 <- infogain_all(df, target_col) #calculate infogain for all attributes
+    attribute1 <- infogain_max(infogain1)[[1]] #select max infogain attribute to split on first
+    n <- levels(df[,attribute1]) #count subset levels in attribute
+    #check if all subsets return same class
+    if (nlevels(df[,target_col])==1){
+      print(paste(attribute1, "all levels", n))
+    } 
+    else{
+      for(i in n){ #loop over each subset level
+        aclass <- df[df[,attribute1]==i, class_name] #class results for attribute subset
+        aclass <- droplevels(aclass)
+        if(nlevels(aclass)==1){ #if only one class, print class result
+          print(paste(attribute1, i, levels(aclass)))
+        } 
+        else{ #select next branch attribute 
+          attribute1id <- which(colnames(df)==attribute1) 
+          df2 <- df[df[,attribute1]==i,-c(attribute1id)] #filter out previous attribute from dataframe
+          class_nameID <- which(colnames(df2)==class_name) #determine new target column id
+          infogain2 <- infogain_all(df2, class_nameID) #determine next atrribute to filter on          
+          attribute2 <- infogain_max(infogain2)$max #attribute2 name
+          n2 <- levels(df2[,attribute2]) #count attribute2 levels 
+          if (nlevels(df2[,class_nameID])==1){ #if only 1 level - print class result
+            print(paste(attribute2, "all levels", n2))
+          } 
+          
+          #Repeat algorithm, looping through each attribute and factor level until only 1 class result remains 
+          #or all attributes are exhausted. Then determine classification based on the higher probability class
+          #after the last attribute. 
+          
+          else{            
+            for(i2 in n2){
+              aclass2 <- df2[df2[,attribute2]==i2, class_name]
+              aclass2 <- droplevels(aclass2)          
+              if(nlevels(aclass2)==1){
+                print(paste(attribute1, i, attribute2, i2, levels(aclass2)))
+              } 
+              else{
+                attribute2id <- which(colnames(df2)==attribute2)
+                df3 <- df2[df2[,attribute2]==i2,-c(attribute2id)]
+                class_nameID <- which(colnames(df3)==class_name)
+                infogain3 <- infogain_all(df3, class_nameID)
+                attribute3 <- infogain_max(infogain3)$max
+                n3 <- levels(df3[,attribute3])
+                if (nlevels(df3[,class_nameID])==1){
+                  print(paste(attribute3, "all levels", n3))
+                } 
+                else{              
+                  for(i3 in n3){
+                    aclass3 <- df3[df3[,attribute3]==i3, class_name]
+                    aclass3 <- droplevels(aclass3)               
+                    if(nlevels(aclass3)==1){
+                      print(paste(attribute1, i, attribute2, i2, attribute3, i3, levels(aclass3)))
+                    } 
+                    else{
+                      attribute3id <- which(colnames(df3)==attribute3)
+                      df4 <- df3[df3[,attribute3]==i3,-c(attribute3id)] 
+                      class_nameID <- which(colnames(df4)==class_name)
+                      infogain4 <- infogain_all(df4, class_nameID)
+                      attribute4 <- infogain_max(infogain4)$max               
+                      n4 <- levels(df4[,attribute4])
+                      if (nlevels(df4[,class_nameID])==1){
+                        print(paste(attribute4, "all levels", n4))
+                      } 
+                      else{                      
+                        for(i4 in n4){
+                          aclass4 <- df4[df4[,attribute4]==i4, class_name]
+                          aclass4 <- droplevels(aclass4)               
+                          if(nlevels(aclass4)==1){
+                            print(paste(attribute1, i, attribute2, i2, attribute3, 
+                                        i3, attribute4, i4, levels(aclass4)))
+                          } 
+                          else{                                            
+                            #no more attributes to split on. 
+                            #determine class by higher probability of remaining factors
+                            max_proportion <- names(sort((table(aclass4)), decreasing=TRUE)[1])
+                            max_proportion_value <- round(max(prop.table(table(aclass4))), 4)
+                            print(paste(attribute1, i, attribute2, i2, attribute3, i3, attribute4, i4, 
+                                        max_proportion, max_proportion_value))
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Test on Jury Training data**
+```{r}
+juryTraining <- read.csv("jury-training-data.csv")
+juryTraining <- juryTraining[complete.cases(juryTraining),]
+decision_tree(juryTraining, 5)
+```
+
+**Create Decision Tree Function for Jury Data**
+```{r}
+jury_tree <- function(v) {  
+  if (v$gender=="Female"){
+    if (v$marital=="Divorced"){
+      return("Guilty")
+    } 
+    else if (v$marital=="Married"){
+      if (v$agegroup=="Older Adult"){
+        return("Not Guilty")
+      } 
+      else if (v$agegroup=="Younger Adult"){
+        return("Guilty")
+      }
+    }
+    else if (v$marital=="Single"){
+      return("Guilty")
+    }
+  }
+  else if (v$gender=="Male") {              
+    if (v$marital=="Divorced") {
+      return("Not Guilty")
+    } 
+    else if (v$marital=="Married") {
+      if (v$employment=="Employed") {
+        return("Guilty")
+      } 
+      else if (v$employment=="Not Employed") {
+        if (v$agegroup=="Older Adult") {
+          return("Guilty")
+        } 
+        else if (v$agegroup=="Younger Adult") {
+          return("Not Guilty")
+        }
+      }
+    }
+    else if (v$marital=="Single") {
+      return("Not Guilty")
+    }    
+  }
+}
+```
+
+**Apply decision tree to classify public jury training set**
+```{r warning=FALSE, message=FALSE}
+juryPublic <- read.csv("jury-learning-data-public.csv")
+juryPublic <- juryPublic[complete.cases(juryPublic),]
+for (i in 1:nrow(juryPublic)) {
+  juryPublic$class[i] <- jury_tree(juryPublic[i,])
+}
+head(juryPublic, 5)
+```
+
+**Evaluate performance of decision tree** 
+```{r warning=FALSE, message=FALSE}
+library(caret)
+confusionMatrix(data=juryPublic$class, reference=juryPublic$tendency, positive="Guilty")
+```
+The decision tree correctly classified 68% of instances. This is decent but specificity is low (55%), meaning several innocent persons were classified as guilty. This is obviously not ideal and we can probably do better with other classification techniques or better tree strategy.  
+
+**Pruning**: Based on the decision tree above, it looks like a simplified algorithm could be made just looking at gender and marital status. Specifically, female-married are primarily Not Guilty while female-single/divorced are mostly Guilty. The opposite is true for males. 
+
+```{r}
+jury_tree_prune <- function(v) {  
+  if (v$gender=="Female"){
+    if (v$marital=="Married"){
+      return("Not Guilty")
+    } 
+    else {
+      return("Guilty")
+    }
+  }
+  else if (v$gender=="Male") {              
+    if (v$marital=="Married") {
+      return("Guilty")
+    }
+    else {
+      return("Not Guilty")
+    }    
+  }
+}
+
+juryPublicPrune <- juryPublic
+juryPublicPrune <- juryPublicPrune[complete.cases(juryPublicPrune),]
+for (i in 1:nrow(juryPublicPrune)) {
+  juryPublicPrune$class[i] <- jury_tree_prune(juryPublicPrune[i,])
+}
+confusionMatrix(data=juryPublicPrune$class, reference=juryPublic$tendency, positive="Guilty")
+```
+
+The pruned results are actually much better (76% vs. 67%) while sensitivity and specificity are both improved!
+
+**Classify private test set**
+```{r}
+juryPrivate <- read.csv("jury-learning-data-private.csv")
+juryPrivate <- juryPrivate[complete.cases(juryPrivate),]
+for (i in 1:nrow(juryPrivate)) {
+  juryPrivate$class[i] <- jury_tree(juryPrivate[i,])
+}
+
+juryPrivatePrune <- juryPrivate
+for (i in 1:nrow(juryPrivatePrune)) {
+  juryPrivatePrune$class[i] <- jury_tree_prune(juryPrivatePrune[i,])
+}
+
+write.csv(juryPrivate, "bchu_juryPrivate.csv")
+write.csv(juryPrivatePrune, "bchu_juryPrivatePrune.csv")
+head(juryPrivate, 10)
+```
+See attached CSV files for full private data classification results  
+* bchu_juryPrivate.csv  
+* bchu_juryPrivatePrune.csv
+
+**Try out rpart package**
+```{r message=FALSE, warning=FALSE}
+library(rpart)
+fit <- rpart(tendency ~ agegroup + employment + marital + gender, data=juryTraining)
+fit
+```
+These are practically the same decision rules as the manual decision tree algorithm. Visualize tree below. 
+
+```{r message=FALSE, warning=FALSE}
+library(rattle)
+library(rpart.plot)
+fancyRpartPlot(fit, sub="")
+```
+
+**Evaluate rpart classification accurary with Jury Public set**  
+```{r}
+rpart_predict <- predict(fit, juryPublic[,-5], type="class")
+confusionMatrix(data=rpart_predict, reference=juryPublic$tendency, positive="Guilty")
+```
+Results are more or less the same as my manual decision tree algorithm but less than the pruned tree. 
+
+**Try out C50 package**
+```{r message=FALSE, warning=FALSE}
+library(C50)
+juryTrainX <- juryTraining[,1:4]
+juryTrainY <- juryTraining[,5]
+juryTrain_c50 <- C5.0(juryTrainX, juryTrainY)
+summary(juryTrain_c50)
+```
+
+**Results on public jury set**
+```{r}
+juryPublicX <- juryPublic[,1:4]
+c50_predict <- predict(juryTrain_c50, juryPublicX, type="class")
+confusionMatrix(data=c50_predict, reference=juryPublic$tendency, positive="Guilty")
+```
+These classification results are equivalent to my pruned decision tree algorithm results!
+
+
