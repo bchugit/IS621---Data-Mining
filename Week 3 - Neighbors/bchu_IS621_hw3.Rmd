@@ -1,0 +1,478 @@
+---
+title: "Naive Bayes and K-Nearest Neighbors"
+author: "Brian Chu"
+date: "March 7, 2015"
+output: pdf_document
+---
+
+###1. Naive Bayes Algorithm
+
+Load and view summary of training set
+```{r}
+nb_train <- read.csv("sample-training-data-naive-bayes.csv")
+str(nb_train)
+summary(nb_train[,1:3])
+```
+
+Calculate frequency proportion of classification variable in training set
+```{r}
+tableClass <- table(nb_train$Class)
+propClass <- prop.table(tableClass)
+propClass
+negClass <- as.numeric(propClass[1])
+posClass <- as.numeric(propClass[2])
+```
+
+Calculate all conditional and prior probabilities for Categories 1-3 in training set
+```{r}
+cat1 <- table(nb_train$Cat1, nb_train$Class) 
+aNeg <- prop.table(cat1, 2)[1] #P(A | -1)
+bNeg <- prop.table(cat1, 2)[2] #P(B | -1)
+aPos <- prop.table(cat1, 2)[3] #P(A | 1)
+bPos <- prop.table(cat1, 2)[4] #P(B | 1)
+
+cat2 <- table(nb_train$Cat2, nb_train$Class)
+gNeg <- prop.table(cat2, 2)[1] #P(G | -1)
+hNeg <- prop.table(cat2, 2)[2] #P(H | -1)
+gPos <- prop.table(cat2, 2)[3] #P(G | 1)
+hPos <- prop.table(cat2, 2)[4] #P(H | 1)
+
+cat3 <- table(nb_train$Cat3, nb_train$Class)
+xNeg <- prop.table(cat3, 2)[1] #P(X | -1)
+yNeg <- prop.table(cat3, 2)[2] #P(Y | -1)
+zNeg <- prop.table(cat3, 2)[3] #P(Z | -1)
+xPos <- prop.table(cat3, 2)[4] #P(X | 1)
+yPos <- prop.table(cat3, 2)[5] #P(Y | 1)
+zPos <- prop.table(cat3, 2)[6] #P(Z | 1)
+```
+
+Function to calculate and evaluate Naive Bayes estimate  
+P(ci) × Pi * 􏰌P(aj = vj | class = ci)
+```{r}
+nb <- function(df) {
+  pos1 <- ifelse(df$Cat1=="A", aPos, bPos)
+  pos2 <- ifelse(df$Cat2=="G", gPos, hPos)
+  pos3 <- ifelse(df$Cat3=="X", xPos, ifelse(df$Cat3=="Y", yPos, zPos))
+  ppos <- posClass * pos1 * pos2 * pos3 #positive classification value
+
+  neg1 <- ifelse(df$Cat1=="A", aNeg, bNeg)
+  neg2 <- ifelse(df$Cat2=="G", gNeg, hNeg)
+  neg3 <- ifelse(df$Cat3=="X", xNeg, ifelse(df$Cat3=="Y", yNeg, zNeg))
+  pneg <- negClass * neg1 * neg2 * neg3 #negative classification value
+
+  ifelse(ppos>pneg, return(1), return(-1)) #classify based on which value is larger
+}
+```
+
+Apply Naive Bayes function to training set, store under Prediction variable
+```{r}
+for (i in 1:nrow(nb_train)) {
+  nb_train$Prediction[i] <- nb(nb_train[i,])
+}
+print(head(nb_train, 10))
+```
+
+Apply Naive Bayes function to test set, store under Prediction variable
+```{r}
+nb_test <- read.csv("sample-testing-data-naive-bayes.csv")
+for (i in 1:nrow(nb_test)) {
+  nb_test$Prediction[i] <- nb(nb_test[i,])
+}
+#write.csv(nb_test, "naive_bayes_result.csv")
+print(nb_test)
+```
+
+Evaluate performance of NB function on test set
+```{r}
+correct <- 0
+for (i in 1:nrow(nb_test)){
+  if(nb_test$Class[i]==nb_test$Prediction[i]) {
+    correct <- correct + 1
+  }
+}
+print(correct)
+print(correct/nrow(nb_test)) 
+```
+The algorithm correctly classified 26/40 (65%) of test records correctly. Not bad but not great either. I think this is because there are a lot of instances with the same input variables but classified differently. 
+
+******
+
+###2. K-Nearest Neighbors Algorithm
+
+Load and summarize data
+```{r}
+knn_train <- read.csv("sample-training-data-nearest-neighbor.csv")
+knn_test <- read.csv("sample-testing-data-nearest-neighbor.csv")
+str(knn_train)
+summary(knn_train)
+```
+
+Function to normalize data
+```{r}
+knn_normalize <- function(var) {
+  range_var <- max(var) - min(var)
+  return((var - min(var)) / range_var)
+}
+```
+
+Function to create normalized dataset
+```{r}
+knn_normalized_data <- function(df, class_var) {
+  #if dataset includes class variable, ignore
+  ifelse(class_var==1, cols<-ncol(df)-1, cols<-ncol(df)) 
+  for (j in 1:cols) {
+    df[,j] <- knn_normalize(df[,j])
+  }
+  return(df)
+}
+```
+
+Create normalized training and testing dataset
+```{r}
+knn_train_norm <- knn_normalized_data(knn_train, 1)
+knn_test_norm <- knn_normalized_data(knn_test, 1)
+```
+
+Function to calculate Euclidean distance  
+* takes in training set, test set, and integer k value  
+* outputs class prediction (-1, 1) or (0,1)
+```{r}
+knn_euclidean <- function(train, test, k) {
+  ed_vector <- numeric() #stores all euclidean distances
+  dist <- numeric() #stores each individual parameter distance value
+  
+  for (i in 1:nrow(train)) {
+    for (j in 1:(ncol(train)-1)) {
+      dist[j] <- (train[i,j] - test[,j])^2
+      #euclidean_distance <- sqrt(((train[i,1] - test[,1])^2) + ((train[i,2] - test[,2])^2) + ((train[i,3] - test[,3])^2))
+      euclidean_distance <- sqrt(sum(dist))
+    }
+    ed_vector <- c(ed_vector, euclidean_distance)
+  }
+  
+  nearest <- head(order(ed_vector),k) #sort distance and take index of k smallest
+  class_var <- train[,ncol(train)]
+  if(min(class_var)==0) { #if class is {0,1}
+    nearest_class <- round(mean(train[,ncol(train)][nearest]),0) #classify by rounded mean of index instances
+  } else { #if class is {-1,1}
+    nearest_class <- sign(mean(train[,ncol(train)][nearest])) #classify by sign of mean of index instances
+  }
+  return(nearest_class)
+}
+```
+
+Classify test set using k values of 1, 3, 5, 7, and 9
+```{r}
+for (i in 1:nrow(knn_test_norm)) {
+  knn_test_norm$Pred_k1[i] <- knn_euclidean(knn_train_norm, knn_test_norm[i,], 1)
+  knn_test_norm$Pred_k3[i] <- knn_euclidean(knn_train_norm, knn_test_norm[i,], 3)
+  knn_test_norm$Pred_k5[i] <- knn_euclidean(knn_train_norm, knn_test_norm[i,], 5)
+  knn_test_norm$Pred_k7[i] <- knn_euclidean(knn_train_norm, knn_test_norm[i,], 7)
+  knn_test_norm$Pred_k9[i] <- knn_euclidean(knn_train_norm, knn_test_norm[i,], 9)
+}
+print(knn_test_norm, digits=2)
+```
+
+Compare and evaluate performance on test set using different k values
+```{r}
+correct <- numeric(5)
+for (i in 1:nrow(knn_test_norm)){
+  for (j in 5:9)
+    if(knn_test_norm$Class[i]==knn_test_norm[i,j]) {
+    correct[j-4] <- correct[j-4] + 1
+  }
+}
+print(correct)
+print(correct/nrow(knn_test_norm))
+```
+k=1 classified 29/40 = 72.5% of test records correctly  
+k=3 classified 31/40 = 77.5% of test records correctly  
+k=5 classified 34/40 = 85.0% of test records correctly  
+k=7 classified 29/40 = 72.5% of test records correctly  
+k=9 classified 31/40 = 77.5% of test records correctly  
+
+The KNN algorithm did best using 5 nearest neighbors and 85% correct classification is a pretty good result. 
+
+******
+
+###4a. 'e1071' Package
+
+Train data using training set
+```{r warning=FALSE}
+library(e1071)
+y_train_nb <- as.factor(nb_train$Class) #classification variable
+x_train_nb <- nb_train[,1:3] #input variables
+nb <- naiveBayes(x_train_nb, y_train_nb) #package function
+```
+
+Apply model to test set
+```{r}
+x_test_nb <- nb_test[,1:3] #input variables
+nb_test$Pred_e1071 <- predict(nb, x_test_nb)
+print(nb_test)
+```
+
+Evaluate performance
+```{r}
+correct <- 0
+for (i in 1:nrow(nb_test)){
+  if(nb_test$Class[i]==nb_test$Pred_e1071[i]) {
+    correct <- correct + 1
+  }
+}
+print(correct/nrow(nb_test)) 
+```
+The e1071 package classified 26/40 (65%) of test records correctly. This is the same result as the manual algorithm.
+
+******
+
+###4b. 'class' Package
+
+Train normalized training dataset 
+```{r warning=FALSE}
+library(class)
+x_train_knn <- knn_train_norm[,1:3]
+y_train_knn <- knn_train_norm$Class
+```
+
+Apply model to normalized testing data
+```{r}
+x_test_knn <- knn_test_norm[,1:3]
+knn_test_norm$Pred_c1 <- knn(x_train_knn, x_test_knn, y_train_knn, k=1)
+knn_test_norm$Pred_c3 <- knn(x_train_knn, x_test_knn, y_train_knn, k=3)
+knn_test_norm$Pred_c5 <- knn(x_train_knn, x_test_knn, y_train_knn, k=5)
+knn_test_norm$Pred_c7 <- knn(x_train_knn, x_test_knn, y_train_knn, k=7)
+knn_test_norm$Pred_c9 <- knn(x_train_knn, x_test_knn, y_train_knn, k=9)
+print(knn_test_norm[,-c(5:9)], digits=2)
+```
+
+Compare and evaluate performance
+```{r}
+correct <- numeric(5)
+for (i in 1:nrow(knn_test_norm)){
+  for (j in 10:14)
+    if(knn_test_norm$Class[i]==knn_test_norm[i,j]) {
+    correct[j-9] <- correct[j-9] + 1
+  }
+}
+print(correct)
+print(correct/nrow(knn_test_norm))
+```
+These are the same results as with the manual algorithm.
+
+******
+
+###5. Jury Dataset - Naive Bayes
+
+Load and examine training set
+```{r}
+jury_train <- read.csv("jury-training-data.csv")
+str(jury_train)
+```
+
+#### Analysis with e1071 package
+```{r}
+y_train_jury <- jury_train$tendency
+x_train_jury <- jury_train[,1:4]
+nb_jury <- naiveBayes(x_train_jury, y_train_jury)
+```
+
+Test public learning dataset
+```{r}
+jurytest_public <- read.csv("jury-learning-data-public.csv")
+jurytest_public <- jurytest_public[complete.cases(jurytest_public),] #remove one NA instance
+x_jurytest_public <- jurytest_public[,1:4]
+jurytest_public$Pred_e1071 <- predict(nb_jury, x_jurytest_public)
+```
+
+Evaluate public set using confusion matrix (caret package)
+```{r warning=FALSE, message=FALSE}
+library(caret)
+confusionMatrix(data=jurytest_public$Pred_e1071, reference=jurytest_public$tendency, positive="Guilty")
+```
+
+63% overall accuracy was achieved. This is sub-optimal, especially given the specificity is only 58.5%. This means that 41.5% of non-guilty persons would be predicted as guilty. Similarly, the sensitivity of 68.5% means that 31.5% of guilty persons are not convicted. I don't think any judicial system would be pleased with these results. 
+
+******
+
+#### Analysis with manual Naive Bayes algorithm
+Train using redone algorithm functions for jury set  
+*I realize a more flexible function would be better, but had trouble implementing this*
+```{r}
+#Classification frequencies
+juryClass <- table(jury_train$tendency)
+juryProp <- prop.table(juryClass)
+juryNegClass <- as.numeric(juryProp[1])
+juryPosClass <- as.numeric(juryProp[2])
+
+#Calculate all conditional and prior probabilities for Categories 1-3 in training set
+#Pos = guilty, Neg = not guilty
+cat1 <- table(jury_train$agegroup, jury_train$tendency) 
+oldNeg <- prop.table(cat1, 2)[3] #P(old | not guilty)
+youngNeg <- prop.table(cat1, 2)[4] #P(young | not guilty)
+oldPos <- prop.table(cat1, 2)[1] #P(old | guilty)
+youngPos <- prop.table(cat1, 2)[2] #P(young | guilty)
+
+cat2 <- table(jury_train$employment, jury_train$tendency)
+empNeg <- prop.table(cat2, 2)[3] #P(employed | not guilty)
+unempNeg <- prop.table(cat2, 2)[4] #P(unemployed | not guilty)
+empPos <- prop.table(cat2, 2)[1] #P(employed | guilty)
+unempPos <- prop.table(cat2, 2)[2] #P(unemployed | guilty)
+
+cat3 <- table(jury_train$gender, jury_train$tendency)
+femNeg <- prop.table(cat3, 2)[3] #P(female | not guilty)
+maleNeg <- prop.table(cat3, 2)[4] #P(male | not guilty)
+femPos <- prop.table(cat3, 2)[1] #P(female | guilty)
+malePos <- prop.table(cat3, 2)[2] #P(male | guilty)
+
+cat4 <- table(jury_train$marital, jury_train$tendency)
+divNeg <- prop.table(cat4, 2)[4] #P(divorced | not guilty)
+marNeg <- prop.table(cat4, 2)[5] #P(married | not guilty)
+singNeg <- prop.table(cat4, 2)[6] #P(single | not guilty)
+divPos <- prop.table(cat4, 2)[1] #P(divorced | guilty)
+marPos <- prop.table(cat4, 2)[2] #P(married | guilty)
+singPos <- prop.table(cat3, 2)[3] #P(single | guilty)
+
+#Function to calculate and evaluate Naive Bayes estimate  
+nb_jury_manual <- function(df) {
+  pos1 <- ifelse(df$agegroup=="Older Adult", oldPos, youngPos)
+  pos2 <- ifelse(df$employment=="Employed", empPos, unempPos)
+  pos3 <- ifelse(df$gender=="Female", femPos, malePos)
+  pos4 <- ifelse(df$marital=="Divorced", divPos, ifelse(df$marital=="Married", marPos, singPos))
+  ppos <- juryPosClass * pos1 * pos2 * pos3 * pos4 #positive classification value (guilty)
+
+  neg1 <- ifelse(df$agegroup=="Older Adult", oldNeg, youngNeg)
+  neg2 <- ifelse(df$employment=="Employed", empNeg, unempNeg)
+  neg3 <- ifelse(df$gender=="Female", femNeg, maleNeg)
+  neg4 <- ifelse(df$marital=="Divorced", divNeg, ifelse(df$marital=="Married", marNeg, singNeg))
+  pneg <- juryNegClass * neg1 * neg2 * neg3 * neg4 #negative classification value (not guilty)
+
+  ifelse(ppos>pneg, return("Guilty"), return("Not Guilty")) #classify based on which value is larger
+}
+```
+
+Test public learning dataset
+```{r}
+for (i in 1:nrow(jurytest_public)) {
+  jurytest_public$Pred_manual[i] <- nb_jury_manual(jurytest_public[i,])
+}
+
+#write.csv(jurytest_public, "jurytest_public_results.csv")
+#print(jurytest_public[-6])
+confusionMatrix(data=jurytest_public$Pred_manual, reference=jurytest_public$tendency, positive="Guilty")
+```
+The same results were achieved as with the e1071 package  
+
+**Compare two methods**
+```{r}
+confusionMatrix(data=jurytest_public$Pred_manual, reference=jurytest_public$Pred_e1071, positive="Guilty")
+```
+Both methods produced the same predictions for the public dataset
+
+******
+
+####Predict private learning dataset using both methods
+```{r}
+jurytest_private <- read.csv("jury-learning-data-private.csv")
+jurytest_private <- jurytest_private[complete.cases(jurytest_private),] #check for complete cases
+x_jurytest_private <- jurytest_private[,1:4]
+
+#e1071 method
+jurytest_private$Pred_e1071 <- predict(nb_jury, x_jurytest_private)
+
+#manual algorithm method
+for (i in 1:nrow(jurytest_private)) {
+  jurytest_private$Pred_manual[i] <- nb_jury_manual(jurytest_private[i,])
+}
+
+#write.csv(jurytest_private, "jurytest_private_results.csv")
+print(jurytest_private)
+```
+
+
+**Compare results of both methods**
+```{r}
+confusionMatrix(data=jurytest_private$Pred_e1071, reference=jurytest_private$Pred_manual, positive="Guilty")
+```
+Both methods produced the same predictions for the private dataset
+
+******
+
+###6. Pima Indians Dataset - KNN
+Load and examine training set
+```{r}
+pima_train <- read.csv("pima-training-data.csv")
+str(pima_train)
+```
+
+#### Analysis with class package (using k=7)
+
+Test public learning dataset
+```{r}
+#create normalized training dataset
+pima_train_norm <- knn_normalized_data(pima_train, 1)
+
+#train data
+y_train_pima <- pima_train_norm$class
+x_train_pima <- pima_train_norm[,1:8]
+
+#test normalized public dataset
+pima_test_public <- read.csv("pima-learning-data-public.csv")
+pima_test_public_norm <- knn_normalized_data(pima_test_public, 1)
+x_test_public_pima <- pima_test_public_norm[,1:8]
+pima_test_public_norm$Pred_class <- knn(x_train_pima, x_test_public_pima, y_train_pima, k=7)
+#print(pima_test_public_norm)
+
+#evaluate predictions
+confusionMatrix(data=pima_test_public_norm$Pred_class, reference=pima_test_public_norm$class, positive="1")
+```
+
+Overall accuracy is about 77% using k=7 neighbors (note: I also tested 1,3,5, and 9 but found k=7 the best predictor). It's interesting that specificity (~90%) is much higher than sensitivity (~51%). This means the algorithm is much better at correctly classifying non-diabetics than positively identifying diabetics. This would, therefore, be a better screening model where those that are positive should be followed up by a more sensitive predictive model. 
+
+******
+
+####Analysis using manual KNN algorithm
+```{r}
+for (i in 1:nrow(pima_test_public_norm)) {
+  pima_test_public_norm$Pred_manual[i] <- knn_euclidean(pima_train_norm, pima_test_public_norm[i,], 7)
+}
+#print(pima_test_public_norm)
+
+#evaluate predictions
+confusionMatrix(data=pima_test_public_norm$Pred_manual, reference=pima_test_public_norm$class, positive="1")
+```
+The same results were achieved as with the class package  
+
+**Compare results of two methods**
+```{r}
+confusionMatrix(data=pima_test_public_norm$Pred_class, reference=pima_test_public_norm$Pred_manual, positive="1")
+```
+Both methods produced the same predictions for the public dataset  
+
+******
+
+####Predict private learning dataset using both methods
+```{r}
+pima_test_private <- read.csv("pima-learning-data-private.csv")
+pima_test_private <- pima_test_private[complete.cases(pima_test_private),] #check for complete cases
+pima_test_private_norm <- knn_normalized_data(pima_test_private, 0) #normalize
+x_test_private_pima <- pima_test_private_norm[,1:8]
+
+#class package
+pima_test_private_norm$Pred_class <- knn(x_train_pima, x_test_private_pima, y_train_pima, k=7)
+
+#manual algorithm
+for (i in 1:nrow(pima_test_private_norm)) {
+  pima_test_private_norm$Pred_manual[i] <- knn_euclidean(pima_train_norm, pima_test_private_norm[i,], 7)
+}
+pima_test_private_norm$Pred_manual <- as.factor(pima_test_private_norm$Pred_manual)
+
+#write.csv(pima_test_private_norm, "pima_private_results.csv")
+print(pima_test_private_norm, digits=1)
+```
+
+**Compare results of both methods**
+```{r}
+confusionMatrix(data=pima_test_private_norm$Pred_class, reference=pima_test_private_norm$Pred_manual, positive="1")
+```
+Both methods produced the same predictions for the private dataset
